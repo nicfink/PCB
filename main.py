@@ -8,33 +8,33 @@ import numpy as np
 import cv2
 
 def load_pcb(name):
-    im = dip.imread(name)
-    #detect_comps(im)
-    im_float = dip.im_to_float(im)
-    im_grey = np.mean(im_float, axis=2)
-    im_size = np.shape(im_grey)
+
+
+    im = dip.imread(name) #read in the PCB
+
+
+    im_float = dip.im_to_float(im) #Convert it to float [0, 1]
+    im_grey = np.mean(im_float, axis=2) #greyscale
+    im_size = np.shape(im_grey)  #get the size
+
+    #Find the center x and y positions to help detect the edges of the board
     center_x = round(im_size[1] / 2)
     center_y = round(im_size[0] / 2)
+
+
     #sobel edge detection
     left_edge = 0
     right_edge = im_size[0]
     top_edge = 0
     bottom_edge = im_size[1]
 
-    #Gx = np.array([[1, 0, -1],
-    #               [2, 0, -2],
-    #               [1, 0, -1]])
-    #Gy = np.array([[1, 2, 1],
-    #               [0, 0, 0],
-    #               [-1, -2, -1]])
 
-    #print ("begin conv")
     sobel_im_x = dip.edge_detect(im_grey, "sobel_v")
     sobel_im_y = dip.edge_detect(im_grey, "sobel_h")
 
-    #sobel_im_y = dip.convolve2d(Gy, im_grey)
-    #print ("end conv")
-    #find left edge
+    # Don't go to the exact edges of the image because the sobel edge detection finds edges near the edge of the image.
+    # Start a little inwards
+    # Find Left Edge
     for i in range(5,im_size[1]-5):
         j = center_y
         if abs(sobel_im_x[j,i]) > 0.1:
@@ -61,109 +61,166 @@ def load_pcb(name):
             bottom_edge = i
             break
 
-
+    # Crop the image to roughly these edges
     im_trim = im_float[top_edge:bottom_edge, left_edge:right_edge, :]
-    #dip.imshow(im_trim)
-    #dip.show()
-    im_noback = detect_comps(dip.float_to_im(im_trim))
-    roi = group(im_noback)
-    print (roi)
+
+    #Remove the background from the image without removing components
+    im_noback = get_layer(dip.float_to_im(im_trim), layer="fore", K = 3)
+    im_back = get_layer(dip.float_to_im(im_trim), layer="back", K = 3)
+
+    #im_noback = get_layer(im_noback, layer="min", K = 3)
+
+    #Find regions of interest on the board
+
+    roi = group_by_contours(im_noback) #find regions by their contours
+    upscale_fact = 4 #for upscaling
+    res_matrix = np.array([[1/upscale_fact, 0],
+                           [0, 1/upscale_fact]])
+    #For each region of interest, show a picture
     for i in range(0, np.shape(roi)[0]):
-        dip.imshow(im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]])
-        dip.show()
+        comp = im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]
+        upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic")
+        ## TODO check for image recognition
+        # In the future, this will be to check where an image
+        # was not recognized to see if we can find anything important
+        if np.shape(comp)[0] > 100:
+            roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]) #use black space sorting to check this area
+            for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
+                comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
+                                roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
+                upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic") #upscale each subregion
+                ##TODO check the subregion for recognition
+                dip.imshow(upscale_comp)
+                dip.show()
+        else:
+            dip.imshow(upscale_comp)
+            dip.show()
 
 
-def detect_comps(board):
-    #dip.imshow(board)
-    #dip.show()
+#layer is what we want to see, back = background, fore = foreground, min = smallest
+def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the number of groups we're finding
+    board = cv2.cvtColor(board,cv2.COLOR_RGB2HSV) #Convert to HSV, works better this way
+    vectorized_board = board.reshape(-1, 3) #convert to a vector for the kmeans analysis
+    vectorized_board = np.float32(vectorized_board) #convert to float which is required
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1) #criteria
 
-    vectorized_board = board.reshape(-1, 3)
-    vectorized_board = np.float32(vectorized_board)
+    attempts = 10 #k means has 10 attempts to identify the areas best
 
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1)
-    K = 4 #anecdotally, this seems to make the most sense as 3 or 4
-    attempts = 10
+    #we only care about the labels, which identify which elements belong to which group
     ret, label, center = cv2.kmeans(vectorized_board, K, None, criteria, attempts, cv2.KMEANS_PP_CENTERS)
-    center = np.uint8(center)
-    print(label.flatten())
-    res = center[label.flatten()]
-    result_image = res.reshape((board.shape))
-    dip.imshow(result_image)
-    dip.show()
 
 
-    #for cluster in range(0, K):
-    #    masked_image = np.copy(board)
-    #    # convert to the shape of a vector of pixel values
-    #    masked_image = masked_image.reshape((-1, 3))
-    #    # color (i.e cluster) to disable
-    #    masked_image[label.flatten() == cluster] = [0, 0, 0]
-    #    # convert back to original shape
-    #    masked_image = masked_image.reshape(board.shape)
-    #    # show the image
-    #    dip.imshow(masked_image)
-    #    dip.show()
-    #Assuming the background layer has the most elements in it, we try to find the largest layer:
-
+    #get the group/label names and how many elements are in each group
     vals, counts = np.unique(label, return_counts=True)
-    ind = np.argmax(counts)
-    back_cluster = vals[ind]
+
+    ind1 = np.argmax(counts) #largest group
+    ind2 = np.argmin(counts) #smallest group
+    back_cluster = vals[ind1] #background group (assuming background is the largest group, which isn't *always* true)
+    min_cluster = vals[ind2] #smallest group
+
     masked_image = np.copy(board)
     # convert to the shape of a vector of pixel values
     masked_image = masked_image.reshape((-1, 3))
-    # color (i.e cluster) to disable
-    masked_image[label.flatten() == back_cluster] = [0, 0, 0]
+    #either enable or disable different layers (ex foreground is everything but background)
+    if layer == "fore":
+        masked_image[label.flatten() == back_cluster] = [0, 0, 0]
+    elif layer == "min":
+        masked_image[label.flatten() != min_cluster] = [0, 0, 0]
+    else:
+        masked_image[label.flatten() != back_cluster] = [0, 0, 0]
     # convert back to original shape
     masked_image = masked_image.reshape(board.shape)
-    # show the image
-    #dip.imshow(masked_image)
-    #dip.show()
+    masked_image = cv2.cvtColor(masked_image, cv2.COLOR_HSV2RGB)
+
     return masked_image
 
 
-def group(noback_im):
-    grey_im = np.mean(noback_im, axis=2)
+
+def group_by_contours(noback_im):
+
+    grey_im = np.mean(noback_im, axis=2) #convert to greyscale
+
+    #lowpas filtering
     blur = np.array([[1/9, 1/9, 1/9],
                      [1/9, 1/9, 1/9],
                      [1/9, 1/9, 1/9]])
+
+    grey_im = dip.convolve2d(grey_im, blur) #blur the image gently
+
+    roi = [] #regions of interest
+    grey_im = cv2.convertScaleAbs(grey_im) #this is needed for the contour mapping, not sure why exactly
+
+    #Does a bit of empirically determined thresholding to better identify contours
+    thresh = 20
+    ret, grey_im = cv2.threshold(grey_im, thresh, 255, cv2.THRESH_BINARY)
+
+    #grey_im[grey_im > 0] = 255
     #dip.imshow(grey_im, 'gray')
     #dip.figure()
-    grey_im = dip.convolve2d(grey_im, blur)
-    #dip.imshow(grey_im, 'gray')
+
+    contours, hierarchy = cv2.findContours(grey_im.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) #Finds the contours in the image
+    ##create an empty image for contours
+    #img_contours = np.zeros(grey_im.shape)
+    ##draw the contours on the empty image
+    #cv2.drawContours(img_contours, contours, -1, 255, 3)
+    #dip.imshow(img_contours)
     #dip.show()
-    #print(np.shape(grey_im)[0])
+
+    #for each contour, create a bounding box. If it is large enough, then return it
+    for cnt in contours:
+        cnt = cnt.reshape(-1, 2)
+        max_y = np.max(cnt[:, 1])
+        min_y = np.min(cnt[:, 1])
+        max_x = np.max(cnt[:, 0])
+        min_x = np.min(cnt[:, 0])
+        if max_y-min_y > 20 and max_x-min_x > 20:
+            roi.append([min_y, max_y, min_x, max_x])
+    return roi
+
+
+
+
+
+
+
+
+
+
+
+
+def group_by_black_space(noback_im):
+    grey_im = np.mean(noback_im, axis=2) #greyscale
+
+    #blur the image
+    blur = np.array([[1 / 9, 1 / 9, 1 / 9],
+                     [1 / 9, 1 / 9, 1 / 9],
+                     [1 / 9, 1 / 9, 1 / 9]])
+    grey_im = dip.convolve2d(grey_im, blur)
     roi = []
+
     for i in range (0, np.shape(grey_im)[0]):
         for j in range (0, np.shape(grey_im)[1]):
-            #print(i)
-            #print(j)
-            if grey_im[i,j] != 0:
+            if grey_im[i,j] != 0: #Find a nonzero pixel
                 y_min = i
-
                 y_max = y_min
-                while y_max < np.shape(grey_im)[0] and grey_im[y_max, j] != 0:
-                #    print(i)
-                #    print(j+k)
+                while y_max < np.shape(grey_im)[0] and grey_im[y_max, j] != 0: #iterate in the y direction until you reach zero pixel
                     y_max += 1
                 y_mid = int((y_max+y_min)/2)
-                #print(y_min)
-                #print(y_max)
-                #print(y_mid)
                 x_min = j
                 x_max = j
-                while x_max < np.shape(grey_im)[1] and grey_im[y_mid, x_max] != 0:
+                #from the y midpoint
+                while x_max < np.shape(grey_im)[1] and grey_im[y_mid, x_max] != 0: #iterate forward in x direction until you reach zero pixel
                     x_max += 1
-                while x_min >= 0 and grey_im[y_mid, x_min] != 0:
+                while x_min >= 0 and grey_im[y_mid, x_min] != 0:#iterate backward in x direction until you reach zero pixel
                     x_min -= 1
-                #print(x_min)
-                #print(x_max)
-                #print(y_min)
-                #print(y_max)
-
-                if x_max - x_min > 20 and y_max - y_min > 20:
+                # construct a bounding box and set pixels in box to zero
+                # if box is big enough, then add it as a region of interest
+                if x_max - x_min > 30 and y_max - y_min > 30:
                     grey_im[y_min + 1:y_max, x_min + 1:x_max] = 0
                     roi.append([y_min+1, y_max, x_min+1, x_max])
                     dip.show()
+                #if box not big enough, then just set the current pixel to zero,
+                # other pixels in the current box may be valuable later
                 else:
                     grey_im[i, j] = 0
     return roi
