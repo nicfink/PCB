@@ -7,6 +7,12 @@ import dippykit as dip
 import numpy as np
 import cv2
 
+import os
+import glob
+import matplotlib.pyplot as plt
+from string import digits
+
+
 def load_pcb(name):
 
 
@@ -63,16 +69,18 @@ def load_pcb(name):
 
     # Crop the image to roughly these edges
     im_trim = im_float[top_edge:bottom_edge, left_edge:right_edge, :]
-
+    dip.imshow(im_trim)
+    dip.show()
     #Remove the background from the image without removing components
     im_noback = get_layer(dip.float_to_im(im_trim), layer="fore", K = 3)
+
     im_back = get_layer(dip.float_to_im(im_trim), layer="back", K = 3)
 
     #im_noback = get_layer(im_noback, layer="min", K = 3)
 
     #Find regions of interest on the board
 
-    roi = group_by_contours(im_noback) #find regions by their contours
+    roi = group_by_contours(im_noback, threshold=20) #find regions by their contours
     upscale_fact = 4 #for upscaling
     res_matrix = np.array([[1/upscale_fact, 0],
                            [0, 1/upscale_fact]])
@@ -81,10 +89,14 @@ def load_pcb(name):
         comp = im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]
         upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic")
         ## TODO check for image recognition
-        # In the future, this will be to check where an image
-        # was not recognized to see if we can find anything important
+        ########################Element Identification######
+        #library_path = ("drive/My Drive/DIP/library_components/*")
+        ##Import the element that was cropped from the pcb board
+        #element_id = element_identification(upscale_comp, library_path)
+        #print(element_id)
+        ########################Element Identification######
         if np.shape(comp)[0] > 100:
-            roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]) #use black space sorting to check this area
+            roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]], threshold=20) #use black space sorting to check this area
             for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
                 comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
                                 roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
@@ -119,6 +131,12 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
     min_cluster = vals[ind2] #smallest group
 
     masked_image = np.copy(board)
+    bum = cv2.cvtColor(masked_image, cv2.COLOR_HSV2RGB)
+    center = np.uint8(center)
+    res = center[label.flatten()]
+    res2 = res.reshape((board.shape))
+    dip.imshow(res2)
+    dip.show()
     # convert to the shape of a vector of pixel values
     masked_image = masked_image.reshape((-1, 3))
     #either enable or disable different layers (ex foreground is everything but background)
@@ -131,21 +149,22 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
     # convert back to original shape
     masked_image = masked_image.reshape(board.shape)
     masked_image = cv2.cvtColor(masked_image, cv2.COLOR_HSV2RGB)
-
+    dip.imshow(masked_image)
+    dip.show()
     return masked_image
 
 
 
-def group_by_contours(noback_im):
+def group_by_contours(noback_im, threshold: int = 10):
 
     grey_im = np.mean(noback_im, axis=2) #convert to greyscale
 
     #lowpas filtering
-    blur = np.array([[1/9, 1/9, 1/9],
-                     [1/9, 1/9, 1/9],
-                     [1/9, 1/9, 1/9]])
+    #blur = np.array([[1/9, 1/9, 1/9],
+    #                 [1/9, 1/9, 1/9],
+    #                 [1/9, 1/9, 1/9]])
 
-    grey_im = dip.convolve2d(grey_im, blur) #blur the image gently
+    #grey_im = dip.convolve2d(grey_im, blur) #blur the image gently
 
     roi = [] #regions of interest
     grey_im = cv2.convertScaleAbs(grey_im) #this is needed for the contour mapping, not sure why exactly
@@ -153,18 +172,18 @@ def group_by_contours(noback_im):
     #Does a bit of empirically determined thresholding to better identify contours
     thresh = 20
     ret, grey_im = cv2.threshold(grey_im, thresh, 255, cv2.THRESH_BINARY)
-
     #grey_im[grey_im > 0] = 255
     #dip.imshow(grey_im, 'gray')
     #dip.figure()
 
+
     contours, hierarchy = cv2.findContours(grey_im.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) #Finds the contours in the image
     ##create an empty image for contours
-    #img_contours = np.zeros(grey_im.shape)
+    img_contours = np.zeros(grey_im.shape)
     ##draw the contours on the empty image
-    #cv2.drawContours(img_contours, contours, -1, 255, 3)
-    #dip.imshow(img_contours)
-    #dip.show()
+    cv2.drawContours(img_contours, contours, -1, 255, 3)
+    dip.imshow(img_contours)
+    dip.show()
 
     #for each contour, create a bounding box. If it is large enough, then return it
     for cnt in contours:
@@ -173,7 +192,7 @@ def group_by_contours(noback_im):
         min_y = np.min(cnt[:, 1])
         max_x = np.max(cnt[:, 0])
         min_x = np.min(cnt[:, 0])
-        if max_y-min_y > 20 and max_x-min_x > 20:
+        if max_y-min_y > threshold and max_x-min_x > threshold:
             roi.append([min_y, max_y, min_x, max_x])
     return roi
 
@@ -188,7 +207,7 @@ def group_by_contours(noback_im):
 
 
 
-def group_by_black_space(noback_im):
+def group_by_black_space(noback_im, threshold: int = 25):
     grey_im = np.mean(noback_im, axis=2) #greyscale
 
     #blur the image
@@ -215,7 +234,7 @@ def group_by_black_space(noback_im):
                     x_min -= 1
                 # construct a bounding box and set pixels in box to zero
                 # if box is big enough, then add it as a region of interest
-                if x_max - x_min > 30 and y_max - y_min > 30:
+                if x_max - x_min > threshold and y_max - y_min > threshold:
                     grey_im[y_min + 1:y_max, x_min + 1:x_max] = 0
                     roi.append([y_min+1, y_max, x_min+1, x_max])
                     dip.show()
@@ -225,7 +244,75 @@ def group_by_black_space(noback_im):
                     grey_im[i, j] = 0
     return roi
 
+########################Element Identification######
+def element_identification(test_path, library_path):
+    im = test_path  # read in the test component
+    original = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)  # convert to grayscale
+    M, N = original.shape
+    # dip.imshow(original, 'gray')
+    # dip.show()
+    original = cv2.normalize(original, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
 
+    # Load all the images
+    all_images_to_compare = []
+    titles = []
+    ssim_index = []
+    for f in glob.iglob(library_path):
+        image = cv2.imread(f)
+        titles.append(f)
+        all_images_to_compare.append(image)
+
+    # dip.imshow(all_images_to_compare[1])
+
+    i = 0
+    maxdict = {}
+
+    for image_to_compare, title in zip(all_images_to_compare, titles):
+        compare_image = all_images_to_compare[i]
+        compare_image = cv2.cvtColor(compare_image, cv2.COLOR_BGR2GRAY)
+        comp_im_reshaped = cv2.resize(compare_image, (N, M), interpolation=cv2.INTER_LINEAR)
+
+        ##NOTE: The component is identified by the title of the image in which it is similar
+        ##NOTE: library images are required to have the name of the component
+        title = os.path.basename(title)
+        title = title[:title.rfind(".")]
+        remove_digits = str.maketrans('', '', digits)
+        title = title.translate(remove_digits)
+
+        # print("Title: " + title)
+        # dip.imshow(comp_im_reshaped,'gray')
+        # dip.show()
+        # calculates SSIM of the images
+        ssim = dip.metrics.SSIM_contrast(original, comp_im_reshaped)
+        flag = 0
+        if i > 0:
+            for p in maxdict.keys():
+
+                if title == p:
+                    flag = 1
+                    if ssim[0] > maxdict.get(p):
+                        maxdict[p] = ssim[0]
+                        # print("Iam here")
+        if flag == 0:
+            maxdict.update({title: ssim[0]})
+
+        # print(ssim[0])
+        i += 1
+    ##arranges the values to see the best comparison
+    sorted_values = sorted(maxdict.values(), reverse=True)  # Sort the values
+    sorted_dict = {}
+    for i in sorted_values:
+        for k in maxdict.keys():
+            if maxdict[k] == i:
+                sorted_dict[k] = maxdict[k]
+                break
+    # print(sorted_dict)
+    # print("compenent is a :", list(sorted_dict.keys())[0])
+    # print("SSIM value:", list(sorted_dict.values())[0])
+    return (list(sorted_dict.keys())[0])
+
+
+########################Element Identification######
 
 
 # Press the green button in the gutter to run the script.
