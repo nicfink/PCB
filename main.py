@@ -14,72 +14,30 @@ from string import digits
 
 
 def load_pcb(name):
-
-
     im = dip.imread(name) #read in the PCB
-
+    handle_noise = False
+    if (handle_noise):
+        im = dip.image_noise(im, 'gaussian', var = 50)
+        strength = 10
+        template_size = 7
+        search_size = 21
+        im = denoise(im, strength, template_size, search_size)
 
     im_float = dip.im_to_float(im) #Convert it to float [0, 1]
-    im_grey = np.mean(im_float, axis=2) #greyscale
-    im_size = np.shape(im_grey)  #get the size
-
-    #Find the center x and y positions to help detect the edges of the board
-    center_x = round(im_size[1] / 2)
-    center_y = round(im_size[0] / 2)
-
-
-    #sobel edge detection
-    left_edge = 0
-    right_edge = im_size[0]
-    top_edge = 0
-    bottom_edge = im_size[1]
+    #im_rot = rotate(im_float, threshold = 0.05)
+    im_trim = crop(im_float, threshold = 0.05)
+    im_trim = remove_shadows(im_trim)
+    #im_trim = im_float
+    x_stretch = 3
+    y_stretch = 3
+    scaling_matrix = np.array([[1 / x_stretch, 0],
+                               [0, 1 / y_stretch]])  # creates the sampling matrix
 
 
-    sobel_im_x = dip.edge_detect(im_grey, "sobel_v")
-    sobel_im_y = dip.edge_detect(im_grey, "sobel_h")
-
-    # Don't go to the exact edges of the image because the sobel edge detection finds edges near the edge of the image.
-    # Start a little inwards
-    # Find Left Edge
-    for i in range(5,im_size[1]-5):
-        j = center_y
-        if abs(sobel_im_x[j,i]) > 0.1:
-            left_edge = i
-            print(left_edge)
-            break
-    #find right edge
-    for i in range(im_size[1]-5, 5, -1):
-        j = center_y
-        if abs(sobel_im_x[j,i]) > 0.1:
-            right_edge = i
-            break
-    # find top edge
-    for i in range(5, im_size[0] - 5):
-        j = center_x
-        print(i)
-        if abs(sobel_im_y[i, j]) > 0.1:
-            top_edge = i
-            break
-    # find bottom edge
-    for i in range(im_size[0] - 5, 5, -1):
-        j = center_x
-        if abs(sobel_im_y[i, j]) > 0.1:
-            bottom_edge = i
-            break
-
-    # Crop the image to roughly these edges
-    im_trim = im_float[top_edge:bottom_edge, left_edge:right_edge, :]
-    dip.imshow(im_trim)
-    dip.show()
     #Remove the background from the image without removing components
     im_noback = get_layer(dip.float_to_im(im_trim), layer="fore", K = 3)
 
-    im_back = get_layer(dip.float_to_im(im_trim), layer="back", K = 3)
-
-    #im_noback = get_layer(im_noback, layer="min", K = 3)
-
     #Find regions of interest on the board
-
     roi = group_by_contours(im_noback, threshold=20) #find regions by their contours
     upscale_fact = 4 #for upscaling
     res_matrix = np.array([[1/upscale_fact, 0],
@@ -89,15 +47,18 @@ def load_pcb(name):
         comp = im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]
         upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic")
         ## TODO check for image recognition
-        ########################Element Identification######
-        #library_path = ("drive/My Drive/DIP/library_components/*")
+
+        library_path = ("./pcb_dataset/*")
         ##Import the element that was cropped from the pcb board
-        #element_id = element_identification(upscale_comp, library_path)
-        #print(element_id)
+        element_id = element_identification_ssim(upscale_comp, library_path)
+        print(element_id)
         ########################Element Identification######
         if np.shape(comp)[0] > 100:
             roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]], threshold=20) #use black space sorting to check this area
             for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
+
+
+
                 comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
                                 roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
                 upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic") #upscale each subregion
@@ -108,7 +69,7 @@ def load_pcb(name):
             dip.imshow(upscale_comp)
             dip.show()
 
-
+#######Component Detection##############
 #layer is what we want to see, back = background, fore = foreground, min = smallest
 def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the number of groups we're finding
     board = cv2.cvtColor(board,cv2.COLOR_RGB2HSV) #Convert to HSV, works better this way
@@ -131,7 +92,7 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
     min_cluster = vals[ind2] #smallest group
 
     masked_image = np.copy(board)
-    bum = cv2.cvtColor(masked_image, cv2.COLOR_HSV2RGB)
+
     center = np.uint8(center)
     res = center[label.flatten()]
     res2 = res.reshape((board.shape))
@@ -198,15 +159,6 @@ def group_by_contours(noback_im, threshold: int = 10):
 
 
 
-
-
-
-
-
-
-
-
-
 def group_by_black_space(noback_im, threshold: int = 25):
     grey_im = np.mean(noback_im, axis=2) #greyscale
 
@@ -243,11 +195,20 @@ def group_by_black_space(noback_im, threshold: int = 25):
                 else:
                     grey_im[i, j] = 0
     return roi
+#######################Element Detection###########
+
+
+
+
+
 
 ########################Element Identification######
-def element_identification(test_path, library_path):
+def element_identification_ssim(test_path, library_path):
     im = test_path  # read in the test component
-    original = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)  # convert to grayscale
+    im = dip.float_to_im(im, 8)
+
+    #original = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)  # convert to grayscale
+    original = np.mean(im, axis = 2)
     M, N = original.shape
     # dip.imshow(original, 'gray')
     # dip.show()
@@ -258,7 +219,8 @@ def element_identification(test_path, library_path):
     titles = []
     ssim_index = []
     for f in glob.iglob(library_path):
-        image = cv2.imread(f)
+
+        image = dip.imread(f)
         titles.append(f)
         all_images_to_compare.append(image)
 
@@ -269,7 +231,8 @@ def element_identification(test_path, library_path):
 
     for image_to_compare, title in zip(all_images_to_compare, titles):
         compare_image = all_images_to_compare[i]
-        compare_image = cv2.cvtColor(compare_image, cv2.COLOR_BGR2GRAY)
+        #compare_image = cv2.cvtColor(compare_image, cv2.COLOR_BGR2GRAY)
+        compare_image = np.mean(compare_image, axis = 2)
         comp_im_reshaped = cv2.resize(compare_image, (N, M), interpolation=cv2.INTER_LINEAR)
 
         ##NOTE: The component is identified by the title of the image in which it is similar
@@ -283,6 +246,8 @@ def element_identification(test_path, library_path):
         # dip.imshow(comp_im_reshaped,'gray')
         # dip.show()
         # calculates SSIM of the images
+        original = dip.im_to_float(original)
+        comp_im_reshaped = comp_im_reshaped.astype('float64')
         ssim = dip.metrics.SSIM_contrast(original, comp_im_reshaped)
         flag = 0
         if i > 0:
@@ -306,18 +271,174 @@ def element_identification(test_path, library_path):
             if maxdict[k] == i:
                 sorted_dict[k] = maxdict[k]
                 break
-    # print(sorted_dict)
-    # print("compenent is a :", list(sorted_dict.keys())[0])
-    # print("SSIM value:", list(sorted_dict.values())[0])
+    print(sorted_dict)
+    print("compenent is a :", list(sorted_dict.keys())[0])
+    print("SSIM value:", list(sorted_dict.values())[0])
     return (list(sorted_dict.keys())[0])
-
-
 ########################Element Identification######
 
 
+
+##########Preprocessing Methods#########
+def rotate(im, threshold):
+    im_grey = np.mean(im, axis=2)  # greyscale
+    im_size = np.shape(im_grey)  # get the size
+
+    # sobel edge detection
+    left_edge = 0
+    right_edge = im_size[0]
+
+    sobel_im_y = dip.edge_detect(im_grey, "sobel_h")
+
+    # Rotation
+    left_check = round((left_edge + right_edge) * 4 / 10)
+    right_check = round((left_edge + right_edge) * 6 / 10)
+    left_h = 0
+    right_h = 0
+
+    for i in range(5, im_size[1] - 5):
+        if left_h == 0:
+            if abs(sobel_im_y[i, left_check]) > threshold:
+                print(i)
+                left_h = i
+        if right_h == 0:
+            if abs(sobel_im_y[i, right_check]) > threshold:
+                right_h = i
+        if left_h != 0 and right_h != 0:
+            break
+
+    del_x = right_check - left_check
+    del_y = right_h - left_h
+
+    theta = np.arctan(del_y / del_x)
+
+    rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                                [np.sin(theta), np.cos(theta)]])  # rotates the sampling matrix
+
+    im = dip.resample(im, rotation_matrix, interpolation="bicubic", crop=True, crop_size=im_size)
+    return im
+
+def crop(im, threshold):
+    im_grey = np.mean(im, axis=2)  # greyscale
+    im_size = np.shape(im_grey)  # get the size
+
+    # Find the center x and y positions to help detect the edges of the board
+    center_x = round(im_size[1] / 2)
+    center_y = round(im_size[0] / 2)
+
+    # sobel edge detection
+    left_edge = 0
+    right_edge = im_size[0]
+    top_edge = 0
+    bottom_edge = im_size[1]
+    sobel_im_x = dip.edge_detect(im_grey, "sobel_v")
+    sobel_im_y = dip.edge_detect(im_grey, "sobel_h")
+    # Don't go to the exact edges of the image because the sobel edge detection finds edges near the edge of the image.
+    # Start a little inwards
+    # Find Left Edge
+    for i in range(5, im_size[1] - 5):
+        j = center_y
+        if abs(sobel_im_x[j, i]) > 0.1:
+            left_edge = i
+            print(left_edge)
+            break
+    # find right edge
+    for i in range(im_size[1] - 5, 5, -1):
+        j = center_y
+        if abs(sobel_im_x[j, i]) > 0.1:
+            right_edge = i
+            break
+    # find top edge
+    for i in range(5, im_size[0] - 5):
+        j = center_x
+        print(i)
+        if abs(sobel_im_y[i, j]) > 0.1:
+            top_edge = i
+            break
+    # find bottom edge
+    for i in range(im_size[0] - 5, 5, -1):
+        j = center_x
+        if abs(sobel_im_y[i, j]) > 0.1:
+            bottom_edge = i
+            break
+
+    # Crop the image to roughly these edges
+    im_trim = im[top_edge:bottom_edge, left_edge:right_edge, :]
+    dip.imshow(im_trim)
+    dip.show()
+    return(im_trim)
+
+def remove_shadows(im):
+    grey_im = np.mean(im, axis=2)
+    mean = np.mean(grey_im)
+    dip.show()
+    grey_im = dip.float_to_im(grey_im, 8)
+    dip.imshow(grey_im, 'gray')
+    dip.show()
+    shape = np.shape(grey_im)
+    width = shape[0]
+    length = shape[1]
+    winSize = round(width/10)
+    if winSize % 2 == 0:
+        winSize = winSize + 1
+
+    lighting = dip.medianBlur(grey_im, winSize)
+    dip.imshow(lighting)
+    dip.show()
+    grey_im = dip.im_to_float(grey_im)
+    lighting = dip.im_to_float(lighting)
+    #dip.imshow(np.divide(grey_im, lighting), 'gray')
+    #dip.show()
+
+    no_shadow_grey_im = grey_im - lighting * 0.3
+    no_shadow_mean = np.mean(no_shadow_grey_im)
+    del_mean = mean - no_shadow_mean
+    no_shadow_grey_im = no_shadow_grey_im + del_mean
+    dip.imshow(no_shadow_grey_im, 'gray')
+    dip.show()
+    scale = np.divide(no_shadow_grey_im, grey_im + 0.0001)
+    dip.imshow(scale)
+    dip.show()
+    scale = np.stack((scale + 0.1 * np.ones([width, length]),) * 3, axis=2)
+    im = np.multiply(im, scale)
+    dip.imshow(im)
+    dip.show()
+    return im
+
+
+def denoise(im, strength, template_size, search_size):
+    dst = cv2.fastNlMeansDenoisingColored(im, None, strength, strength, template_size, search_size)
+    dip.imshow(dst)
+    dip.show()
+    return dst
+
+def denoise_dct(im):
+    im = dip.im_to_float(im)
+
+    block_size = (8, 8)
+    num_coeffs = 6
+    rgb_planes = cv2.split(im)
+    compressed_planes = []
+    for plane in rgb_planes:
+        dct = dip.block_process(plane, dip.dct_2d, block_size)  # take the dct in 8 by 8 blocks
+
+        empty = np.zeros((np.shape(plane)))  # create an empty image to copy new pixels into
+        first = dip.zigzag_indices(block_size, num_coeffs)  # get indices of the first 15 coefficients
+        for i in range(0, np.shape(dct)[0] - 7, 8):  # for each block in x
+            for j in range(0, np.shape(dct)[1] - 7, 8):  # for each block in y
+                sub_dct = dct[i:i + 8, j:j + 8]  # get the 8 by 8 block
+                em = np.zeros(np.shape(sub_dct))  # get an empty 8 by 8 block
+                em[first] = sub_dct[first]  # copy the first 15 coefficients in
+                empty[i:i + 8, j:j + 8] = em  # store the 8 by 8 block in the empty matrix
+        compressed = dip.block_process(empty, dip.idct_2d, (8, 8))  # take the idct in 8x8 blocks
+        compressed_planes.append(compressed)
+    compressed_whole = cv2.merge(compressed_planes)
+    return compressed_whole
+##########Preprocessing Methods#########
+
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    load_pcb("simplePCB_ADI.jpg")
+    load_pcb("simplePCB.jpg")
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/
 
@@ -325,23 +446,3 @@ if __name__ == '__main__':
 
 
 
-
-#im_float[:, :, 1] = np.zeros([im.shape[0], im.shape[1]])
-
-    #im_float = np.mean(im_float, axis=2)
-
-    #sin(theta/2) = sqrt(1-cos(theta)/2)
-
-
-    #hpf = np.array([[-1, -1, -1],
-    #                [-1, 8, -1],
-    #               [-1, -1, -1]])
-
-    #hpf = np.array([[.17, .67, .17],
-    #                [.67, -3.5, .67],
-    #                [.17, .67, .17]])
-
-
-    #fft = dip.fft2(hpf)
-    #dip.imshow(abs(fft))
-    #im_filt = dip.convolve2d(im_float, hpf)
