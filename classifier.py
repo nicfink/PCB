@@ -18,21 +18,19 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(7744, 120)
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 6)
-        self.softmax = nn.Softmax(dim = 1)
 
     def forward(self, x):
-        print(self)
-        print(x)
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = torch.flatten(x, 1) # flatten all dimensions except batch
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
-        print(x)
-        x = self.softmax(x)
-        # outputs = torch.unsqueeze(outputs, dim = 0)
+        x = F.softmax(x, dim=-1)
         return x
+
+
+net = Net()
 
 def train():
     net = Net()
@@ -48,7 +46,8 @@ def train():
 
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
-
+            print (inputs)
+            print (labels)
             inputs = torch.unsqueeze(inputs, dim=0)
 
             # zero the parameter gradients
@@ -62,7 +61,7 @@ def train():
             hotvec[int(labels)] = 1
 
             print(outputs)
-            loss = criterion(outputs, (labels))
+            loss = criterion(outputs, labels)
             #loss = torch.neg(outputs).dot(hotvec)
             loss.backward()
             optimizer.step()

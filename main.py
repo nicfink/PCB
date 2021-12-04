@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from string import digits
 import torch
 from classifier import Net
-
+import torchvision.transforms as transforms
 
 
 def load_pcb(name):
@@ -36,7 +36,7 @@ def load_pcb(name):
     scaling_matrix = np.array([[1 / x_stretch, 0],
                                [0, 1 / y_stretch]])  # creates the sampling matrix
 
-
+    length, width, chan = np.shape(im_trim)
     #Remove the background from the image without removing components
     im_noback = get_layer(dip.float_to_im(im_trim), layer="fore", K = 3)
 
@@ -48,35 +48,39 @@ def load_pcb(name):
     #For each region of interest, show a picture
     for i in range(0, np.shape(roi)[0]):
         comp = im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]
-        upscale_comp = dip.resample(comp, res_matrix, interpolation="hold")
+        upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic")
         ## TODO check for image recognition
 
         library_path = ("./pcb_dataset/*")
         ##Import the element that was cropped from the pcb board
-        element_id = element_identification(upscale_comp)
+
         #element_id = element_identification_ssim(upscale_comp, library_path)
-        print(element_id)
+
         ########################Element Identification######
-        if np.shape(comp)[0] > 100:
+        if np.shape(comp)[0] > length/10 or np.shape(comp)[1] > width/10:
             roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]], threshold=20) #use black space sorting to check this area
             for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
                 comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
                                 roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
                 upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic") #upscale each subregion
                 ##TODO check the subregion for recognition
-                dip.imshow(upscale_comp)
-                dip.show()
+                #dip.imshow(upscale_comp)
+                #dip.show()
+                element_id = element_identification(comp)
+                print(element_id)
         else:
-            dip.imshow(upscale_comp)
-            dip.show()
+            element_id = element_identification(comp)
+            print(element_id)
+            #dip.imshow(upscale_comp)
+            #dip.show()
 
 #######Component Detection##############
 #layer is what we want to see, back = background, fore = foreground, min = smallest
 def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the number of groups we're finding
 
     board = cv2.cvtColor(board,cv2.COLOR_RGB2HSV) #Convert to HSV, works better this way
-    dip.imshow(board)
-    dip.show()
+    #dip.imshow(board)
+    #dip.show()
     vectorized_board = board.reshape(-1, 3) #convert to a vector for the kmeans analysis
     vectorized_board = np.float32(vectorized_board) #convert to float which is required
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1) #criteria
@@ -114,16 +118,16 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
     # convert back to original shape
     masked_image = masked_image.reshape(board.shape)
     masked_image = cv2.cvtColor(masked_image, cv2.COLOR_HSV2RGB)
-    dip.subplot(1, 3, 1)
-    dip.imshow(board)
-    dip.title("Original Board in HSI Color Coordinates")
-    dip.subplot(1, 3, 2)
-    dip.imshow(res2)
-    dip.title("K Means Grouping of Board (3 Groups)")
-    dip.subplot(1, 3, 3)
-    dip.imshow(masked_image)
-    dip.title("Original Board RGB Coordinates, No Background")
-    dip.show()
+    #dip.subplot(1, 3, 1)
+    #dip.imshow(board)
+    #dip.title("Original Board in HSI Color Coordinates")
+    #dip.subplot(1, 3, 2)
+    #dip.imshow(res2)
+    #dip.title("K Means Grouping of Board (3 Groups)")
+    #dip.subplot(1, 3, 3)
+    #dip.imshow(masked_image)
+    #dip.title("Original Board RGB Coordinates, No Background")
+    #dip.show()
     return masked_image
 
 
@@ -145,9 +149,8 @@ def group_by_contours(noback_im, threshold: int = 10):
     ##draw the contours on the empty image
     cv2.drawContours(img_contours, contours, -1, 255, 3)
 
-    dip.imshow(img_contours)
-
-    dip.show()
+    #dip.imshow(img_contours)
+    #dip.show()
 
     #for each contour, create a bounding box. If it is large enough, then return it
     for cnt in contours:
@@ -210,22 +213,27 @@ def group_by_black_space(noback_im, threshold: int = 25):
 
 def element_identification(im):
     model = Net()
-
+    transform = transforms.Compose(
+        [transforms.ToTensor(),
+         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     checkpoint = torch.load('./im_class.pth')
-    print(checkpoint)
+
     model.load_state_dict(checkpoint)
     #model.eval()
 
-    im = cv2.resize(dip.float_to_im(im, 8), (100, 100))
-    im = im.reshape((3, 100, 100))
-    image = torch.Tensor(im)
-    image = torch.unsqueeze(image, dim = 0)
-    print(image)
-    print(image.size())
+    im = cv2.resize(dip.float_to_im(im, 8), (100, 100), interpolation=cv2.INTER_CUBIC)
+    dip.imshow(im)
+    dip.show()
+    #im = im.reshape((3, 32, 32))
+
+    #image = torch.Tensor(im)
+    #image = torch.unsqueeze(image, dim = 0)
+    image = transform(im)
+    image = torch.unsqueeze(image, dim=0)
     output = model(image)
     index = torch.argmax(output)
-    print(output)
 
+    print(output)
     dict = {0: 'capacitor', 1: 'diode', 2: 'ic', 3: 'inductor', 4: 'resistor', 5: 'resistor'}
     print(dict[int(index)])
     return dict[int(index)]
@@ -327,7 +335,6 @@ def rotate(im, threshold):
     for i in range(5, im_size[1] - 5):
         if left_h == 0:
             if abs(sobel_im_y[i, left_check]) > threshold:
-                print(i)
                 left_h = i
         if right_h == 0:
             if abs(sobel_im_y[i, right_check]) > threshold:
@@ -368,7 +375,6 @@ def crop(im, threshold):
         j = center_y
         if abs(sobel_im_x[j, i]) > 0.1:
             left_edge = i
-            print(left_edge)
             break
     # find right edge
     for i in range(im_size[1] - 5, 5, -1):
@@ -379,7 +385,6 @@ def crop(im, threshold):
     # find top edge
     for i in range(5, im_size[0] - 5):
         j = center_x
-        print(i)
         if abs(sobel_im_y[i, j]) > 0.1:
             top_edge = i
             break
@@ -392,8 +397,7 @@ def crop(im, threshold):
 
     # Crop the image to roughly these edges
     im_trim = im[top_edge:bottom_edge, left_edge:right_edge, :]
-    dip.imshow(im_trim)
-    dip.show()
+
     return(im_trim)
 
 def remove_shadows(im):
@@ -428,8 +432,6 @@ def remove_shadows(im):
 
 def denoise(im, strength, template_size, search_size):
     dst = cv2.fastNlMeansDenoisingColored(im, None, strength, strength, template_size, search_size)
-    dip.imshow(dst)
-    dip.show()
     return dst
 
 def denoise_dct(im):
