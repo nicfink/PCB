@@ -11,21 +11,24 @@ import os
 import glob
 import matplotlib.pyplot as plt
 from string import digits
+import torch
+from classifier import Net
+
 
 
 def load_pcb(name):
     im = dip.imread(name) #read in the PCB
     handle_noise = False
     if (handle_noise):
-        im = dip.image_noise(im, 'gaussian', var = 50)
+        im = dip.image_noise(im, 'gaussian', var = 100)
         strength = 10
         template_size = 7
         search_size = 21
         im = denoise(im, strength, template_size, search_size)
 
     im_float = dip.im_to_float(im) #Convert it to float [0, 1]
-    #im_rot = rotate(im_float, threshold = 0.05)
-    im_trim = crop(im_float, threshold = 0.05)
+    #im_rot = rotate(im_float, threshold=0.05)
+    im_trim = crop(im_float, threshold=0.05)
     im_trim = remove_shadows(im_trim)
     #im_trim = im_float
     x_stretch = 3
@@ -45,20 +48,18 @@ def load_pcb(name):
     #For each region of interest, show a picture
     for i in range(0, np.shape(roi)[0]):
         comp = im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]
-        upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic")
+        upscale_comp = dip.resample(comp, res_matrix, interpolation="hold")
         ## TODO check for image recognition
 
         library_path = ("./pcb_dataset/*")
         ##Import the element that was cropped from the pcb board
-        element_id = element_identification_ssim(upscale_comp, library_path)
+        element_id = element_identification(upscale_comp)
+        #element_id = element_identification_ssim(upscale_comp, library_path)
         print(element_id)
         ########################Element Identification######
         if np.shape(comp)[0] > 100:
             roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]], threshold=20) #use black space sorting to check this area
             for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
-
-
-
                 comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
                                 roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
                 upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic") #upscale each subregion
@@ -72,7 +73,10 @@ def load_pcb(name):
 #######Component Detection##############
 #layer is what we want to see, back = background, fore = foreground, min = smallest
 def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the number of groups we're finding
+
     board = cv2.cvtColor(board,cv2.COLOR_RGB2HSV) #Convert to HSV, works better this way
+    dip.imshow(board)
+    dip.show()
     vectorized_board = board.reshape(-1, 3) #convert to a vector for the kmeans analysis
     vectorized_board = np.float32(vectorized_board) #convert to float which is required
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1) #criteria
@@ -81,6 +85,7 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
 
     #we only care about the labels, which identify which elements belong to which group
     ret, label, center = cv2.kmeans(vectorized_board, K, None, criteria, attempts, cv2.KMEANS_PP_CENTERS)
+
 
 
     #get the group/label names and how many elements are in each group
@@ -96,8 +101,7 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
     center = np.uint8(center)
     res = center[label.flatten()]
     res2 = res.reshape((board.shape))
-    dip.imshow(res2)
-    dip.show()
+
     # convert to the shape of a vector of pixel values
     masked_image = masked_image.reshape((-1, 3))
     #either enable or disable different layers (ex foreground is everything but background)
@@ -110,7 +114,15 @@ def get_layer(board: np.array, layer: str = "fore", K: int = 3): #K is the numbe
     # convert back to original shape
     masked_image = masked_image.reshape(board.shape)
     masked_image = cv2.cvtColor(masked_image, cv2.COLOR_HSV2RGB)
+    dip.subplot(1, 3, 1)
+    dip.imshow(board)
+    dip.title("Original Board in HSI Color Coordinates")
+    dip.subplot(1, 3, 2)
+    dip.imshow(res2)
+    dip.title("K Means Grouping of Board (3 Groups)")
+    dip.subplot(1, 3, 3)
     dip.imshow(masked_image)
+    dip.title("Original Board RGB Coordinates, No Background")
     dip.show()
     return masked_image
 
@@ -120,30 +132,21 @@ def group_by_contours(noback_im, threshold: int = 10):
 
     grey_im = np.mean(noback_im, axis=2) #convert to greyscale
 
-    #lowpas filtering
-    #blur = np.array([[1/9, 1/9, 1/9],
-    #                 [1/9, 1/9, 1/9],
-    #                 [1/9, 1/9, 1/9]])
-
-    #grey_im = dip.convolve2d(grey_im, blur) #blur the image gently
-
     roi = [] #regions of interest
     grey_im = cv2.convertScaleAbs(grey_im) #this is needed for the contour mapping, not sure why exactly
 
     #Does a bit of empirically determined thresholding to better identify contours
     thresh = 20
     ret, grey_im = cv2.threshold(grey_im, thresh, 255, cv2.THRESH_BINARY)
-    #grey_im[grey_im > 0] = 255
-    #dip.imshow(grey_im, 'gray')
-    #dip.figure()
-
 
     contours, hierarchy = cv2.findContours(grey_im.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) #Finds the contours in the image
     ##create an empty image for contours
     img_contours = np.zeros(grey_im.shape)
     ##draw the contours on the empty image
     cv2.drawContours(img_contours, contours, -1, 255, 3)
+
     dip.imshow(img_contours)
+
     dip.show()
 
     #for each contour, create a bounding box. If it is large enough, then return it
@@ -203,6 +206,32 @@ def group_by_black_space(noback_im, threshold: int = 25):
 
 
 ########################Element Identification######
+
+
+def element_identification(im):
+    model = Net()
+
+    checkpoint = torch.load('./im_class.pth')
+    print(checkpoint)
+    model.load_state_dict(checkpoint)
+    #model.eval()
+
+    im = cv2.resize(dip.float_to_im(im, 8), (100, 100))
+    im = im.reshape((3, 100, 100))
+    image = torch.Tensor(im)
+    image = torch.unsqueeze(image, dim = 0)
+    print(image)
+    print(image.size())
+    output = model(image)
+    index = torch.argmax(output)
+    print(output)
+
+    dict = {0: 'capacitor', 1: 'diode', 2: 'ic', 3: 'inductor', 4: 'resistor', 5: 'resistor'}
+    print(dict[int(index)])
+    return dict[int(index)]
+
+
+
 def element_identification_ssim(test_path, library_path):
     im = test_path  # read in the test component
     im = dip.float_to_im(im, 8)
@@ -219,7 +248,6 @@ def element_identification_ssim(test_path, library_path):
     titles = []
     ssim_index = []
     for f in glob.iglob(library_path):
-
         image = dip.imread(f)
         titles.append(f)
         all_images_to_compare.append(image)
@@ -371,10 +399,9 @@ def crop(im, threshold):
 def remove_shadows(im):
     grey_im = np.mean(im, axis=2)
     mean = np.mean(grey_im)
-    dip.show()
+
     grey_im = dip.float_to_im(grey_im, 8)
-    dip.imshow(grey_im, 'gray')
-    dip.show()
+
     shape = np.shape(grey_im)
     width = shape[0]
     length = shape[1]
@@ -383,26 +410,19 @@ def remove_shadows(im):
         winSize = winSize + 1
 
     lighting = dip.medianBlur(grey_im, winSize)
-    dip.imshow(lighting)
-    dip.show()
+
     grey_im = dip.im_to_float(grey_im)
     lighting = dip.im_to_float(lighting)
-    #dip.imshow(np.divide(grey_im, lighting), 'gray')
-    #dip.show()
 
     no_shadow_grey_im = grey_im - lighting * 0.3
     no_shadow_mean = np.mean(no_shadow_grey_im)
     del_mean = mean - no_shadow_mean
     no_shadow_grey_im = no_shadow_grey_im + del_mean
-    dip.imshow(no_shadow_grey_im, 'gray')
-    dip.show()
-    scale = np.divide(no_shadow_grey_im, grey_im + 0.0001)
-    dip.imshow(scale)
-    dip.show()
+
+    scale = np.divide(no_shadow_grey_im, grey_im + 0.01)
     scale = np.stack((scale + 0.1 * np.ones([width, length]),) * 3, axis=2)
     im = np.multiply(im, scale)
-    dip.imshow(im)
-    dip.show()
+
     return im
 
 
@@ -438,7 +458,7 @@ def denoise_dct(im):
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    load_pcb("simplePCB.jpg")
+    load_pcb("simplePCB_ADI.jpg")
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/
 
