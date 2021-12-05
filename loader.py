@@ -14,11 +14,13 @@ def loader():
          transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     library_path = './pcb_dataset/*'
     new_path = './dataset/'
-    dict = {'capacitor': 0, 'diode': 1, 'ic': 2, 'inductor': 3, 'resistor': 4, 'transistor': 2}
-    dict2 = {'capacitors': 0, 'diodes': 1, 'ICs': 2, 'inductors':3, 'resistors':4, 'transistors':2}
+    dict2 = {'capacitor': 0, 'diode': 1, 'ic': 2, 'inductor': 3, 'resistor': 4, 'transistor': 5,
+            'capacitors': 0, 'diodes': 1, 'ICs': 2, 'inductors':3, 'resistors':4, 'transistors':5}
     training_set = []
+    num = 0
     for f in glob.iglob(library_path): #Get all the sub folders
         for im in glob.iglob(f+'\*'):
+            num = num + 1
             i = dip.imread(im)
             name = im.split('\\')[2].split('_')[0]
             label = dict2[name]
@@ -30,7 +32,7 @@ def loader():
             lab = torch.LongTensor([label])
             tup = (tens_im, lab)
             training_set.append(tup)
-
+    print(num)
     np.random.shuffle(training_set)
     return training_set
 

@@ -21,12 +21,11 @@ def load_pcb(name):
     im = dip.imread(name) #read in the PCB
     handle_noise = False
     if (handle_noise):
-        im = dip.image_noise(im, 'gaussian', var = 100)
+        #im = dip.image_noise(im, 'gaussian', var = 100)
         strength = 10
         template_size = 7
         search_size = 21
         im = denoise(im, strength, template_size, search_size)
-
     im_float = dip.im_to_float(im) #Convert it to float [0, 1]
     #im_rot = rotate(im_float, threshold=0.05)
     im_trim = crop(im_float, threshold=0.05)
@@ -67,14 +66,14 @@ def load_pcb(name):
                     #dip.show()
                     #element_id = element_identification_ssim(comp, library_path)
                     element_id = element_identification(comp)
-                    print(element_id)
+                    #print(element_id)
                     components.append(element_id)
             else:
                 #element_id = element_identification_ssim(comp, library_path)
                 # dip.imshow(upscale_comp)
                 # dip.show()
                 element_id = element_identification(comp)
-                print(element_id)
+                #print(element_id)
                 components.append(element_id)
     make_bom(components)
 
@@ -226,8 +225,7 @@ def element_identification(im):
     #model.eval()
 
     im = cv2.resize(dip.float_to_im(im, 8), (100, 100), interpolation=cv2.INTER_CUBIC)
-    #dip.imshow(im)
-    #dip.show()
+
     #im = im.reshape((3, 32, 32))
 
     #image = torch.Tensor(im)
@@ -239,7 +237,9 @@ def element_identification(im):
 
     #print(output)
     dict = {0: 'capacitor', 1: 'diode', 2: 'ic', 3: 'inductor', 4: 'resistor', 5: 'transistor'}
-    #print(dict[int(index)])
+    print(dict[int(index)])
+    dip.imshow(im)
+    dip.show()
     return dict[int(index)]
 
 
