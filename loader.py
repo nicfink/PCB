@@ -14,8 +14,8 @@ def loader():
          transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     library_path = './pcb_dataset/*'
     new_path = './dataset/'
-    dict = {'capacitor': 0, 'diode': 1, 'ic': 2, 'inductor': 3, 'resistor': 4, 'transistor': 5}
-    dict2 = {'capacitors': 0, 'diodes': 1, 'ICs': 2, 'inductors':3, 'resistors':4, 'transistors':5}
+    dict = {'capacitor': 0, 'diode': 1, 'ic': 2, 'inductor': 3, 'resistor': 4, 'transistor': 2}
+    dict2 = {'capacitors': 0, 'diodes': 1, 'ICs': 2, 'inductors':3, 'resistors':4, 'transistors':2}
     training_set = []
     for f in glob.iglob(library_path): #Get all the sub folders
         for im in glob.iglob(f+'\*'):

@@ -14,6 +14,7 @@ from string import digits
 import torch
 from classifier import Net
 import torchvision.transforms as transforms
+import csv as csv
 
 
 def load_pcb(name):
@@ -45,34 +46,37 @@ def load_pcb(name):
     upscale_fact = 4 #for upscaling
     res_matrix = np.array([[1/upscale_fact, 0],
                            [0, 1/upscale_fact]])
+    components = []
     #For each region of interest, show a picture
     for i in range(0, np.shape(roi)[0]):
         comp = im_trim[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]]
         upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic")
-        ## TODO check for image recognition
 
         library_path = ("./pcb_dataset/*")
-        ##Import the element that was cropped from the pcb board
 
-        #element_id = element_identification_ssim(upscale_comp, library_path)
-
-        ########################Element Identification######
-        if np.shape(comp)[0] > length/10 or np.shape(comp)[1] > width/10:
-            roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]], threshold=20) #use black space sorting to check this area
-            for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
-                comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
-                                roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
-                upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic") #upscale each subregion
-                ##TODO check the subregion for recognition
-                #dip.imshow(upscale_comp)
-                #dip.show()
+        #Identify the element
+        if np.shape(comp)[0] < length/2 or np.shape(comp)[1] < width/2:
+            if np.shape(comp)[0] > length/10 or np.shape(comp)[1] > width/10:
+                roi2 = group_by_black_space(im_noback[roi[i][0]:roi[i][1], roi[i][2]:roi[i][3]], threshold=20) #use black space sorting to check this area
+                for j in range(0, np.shape(roi2)[0]): #for each subregion of interest
+                    comp = im_trim[roi[i][0] + roi2[j][0]:roi[i][0] + roi2[j][1],
+                                    roi[i][2] + roi2[j][2]:roi[i][2] + roi2[j][3]] #cut out each subregion this region
+                    upscale_comp = dip.resample(comp, res_matrix, interpolation="bicubic") #upscale each subregion
+                    ##TODO check the subregion for recognition
+                    #dip.imshow(upscale_comp)
+                    #dip.show()
+                    #element_id = element_identification_ssim(comp, library_path)
+                    element_id = element_identification(comp)
+                    print(element_id)
+                    components.append(element_id)
+            else:
+                #element_id = element_identification_ssim(comp, library_path)
+                # dip.imshow(upscale_comp)
+                # dip.show()
                 element_id = element_identification(comp)
                 print(element_id)
-        else:
-            element_id = element_identification(comp)
-            print(element_id)
-            #dip.imshow(upscale_comp)
-            #dip.show()
+                components.append(element_id)
+    make_bom(components)
 
 #######Component Detection##############
 #layer is what we want to see, back = background, fore = foreground, min = smallest
@@ -222,8 +226,8 @@ def element_identification(im):
     #model.eval()
 
     im = cv2.resize(dip.float_to_im(im, 8), (100, 100), interpolation=cv2.INTER_CUBIC)
-    dip.imshow(im)
-    dip.show()
+    #dip.imshow(im)
+    #dip.show()
     #im = im.reshape((3, 32, 32))
 
     #image = torch.Tensor(im)
@@ -233,9 +237,9 @@ def element_identification(im):
     output = model(image)
     index = torch.argmax(output)
 
-    print(output)
-    dict = {0: 'capacitor', 1: 'diode', 2: 'ic', 3: 'inductor', 4: 'resistor', 5: 'resistor'}
-    print(dict[int(index)])
+    #print(output)
+    dict = {0: 'capacitor', 1: 'diode', 2: 'ic', 3: 'inductor', 4: 'resistor', 5: 'transistor'}
+    #print(dict[int(index)])
     return dict[int(index)]
 
 
@@ -255,10 +259,11 @@ def element_identification_ssim(test_path, library_path):
     all_images_to_compare = []
     titles = []
     ssim_index = []
-    for f in glob.iglob(library_path):
-        image = dip.imread(f)
-        titles.append(f)
-        all_images_to_compare.append(image)
+    for f in glob.iglob(library_path):  # Get all the sub folders
+        for im in glob.iglob(f + '\*'):
+            image = dip.imread(im)
+            titles.append(im.split('\\')[2].split('_')[0])
+            all_images_to_compare.append(image)
 
     # dip.imshow(all_images_to_compare[1])
 
@@ -311,12 +316,32 @@ def element_identification_ssim(test_path, library_path):
     print("compenent is a :", list(sorted_dict.keys())[0])
     print("SSIM value:", list(sorted_dict.values())[0])
     return (list(sorted_dict.keys())[0])
+
+
+def make_bom(components):
+    total_cost = 0
+    prices = {'capacitor': 0.13,
+              'resistor': 0.007,
+              'inductor': 0.03,
+              'transistor': 0.2,
+              'diode': 0.15,
+              'ic': 0.5}
+    with open('bom.csv', 'w', newline = '') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',
+                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        for i in components:
+            price = prices[i]
+            total_cost = total_cost + price
+            writer.writerow([i] + ['$' + str(price)])
+        writer.writerow(['Total'] + ['$' + str(total_cost)])
+
 ########################Element Identification######
 
 
 
 ##########Preprocessing Methods#########
 def rotate(im, threshold):
+
     im_grey = np.mean(im, axis=2)  # greyscale
     im_size = np.shape(im_grey)  # get the size
 

@@ -17,7 +17,7 @@ class Net(nn.Module):
         self.conv2 = nn.Conv2d(6, 16, 5)
         self.fc1 = nn.Linear(7744, 120)
         self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 6)
+        self.fc3 = nn.Linear(84, 5)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
@@ -40,14 +40,14 @@ def train():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
-    for epoch in range(2):  # loop over the dataset multiple times
+    for epoch in range(5):  # loop over the dataset multiple times
         running_loss = 0.0
         for i, data in enumerate(ts, 0):
 
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
-            print (inputs)
-            print (labels)
+            #print (inputs)
+            #print (labels)
             inputs = torch.unsqueeze(inputs, dim=0)
 
             # zero the parameter gradients
@@ -60,7 +60,7 @@ def train():
             hotvec = torch.zeros(6)
             hotvec[int(labels)] = 1
 
-            print(outputs)
+            #print(outputs)
             loss = criterion(outputs, labels)
             #loss = torch.neg(outputs).dot(hotvec)
             loss.backward()
