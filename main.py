@@ -283,13 +283,33 @@ def element_identification_ssim(test_path, library_path):
         remove_digits = str.maketrans('', '', digits)
         title = title.translate(remove_digits)
 
-        # print("Title: " + title)
-        # dip.imshow(comp_im_reshaped,'gray')
-        # dip.show()
         # calculates SSIM of the images
         original = dip.im_to_float(original)
         comp_im_reshaped = comp_im_reshaped.astype('float64')
         ssim = dip.metrics.SSIM_contrast(original, comp_im_reshaped)
+        
+        #ROTATION SSIM: compares image of captured component to rotated images of our library
+        #this provides a more accurate way of identifying elements if they are
+        #captured in a different orientation
+        
+        rot1 = np.rot90(compare_image)
+        rot1_reshaped = cv2.resize(rot1, (N,M), interpolation=cv2.INTER_LINEAR)
+        rot2 = np.rot90(rot1)
+        rot2_reshaped = cv2.resize(rot2, (N,M), interpolation=cv2.INTER_LINEAR)
+        rot3 = np.rot90(rot2)
+        rot3_reshaped = cv2.resize(rot3, (N,M), interpolation=cv2.INTER_LINEAR)
+
+        ssim_rot1 = dip.metrics.SSIM(original, rot1_reshaped)
+        ssim_rot2 = dip.metrics.SSIM(original, rot2_reshaped)
+        ssim_rot3 = dip.metrics.SSIM(original, rot3_reshaped)
+
+        if ssim_rot1[0] > ssim[0]:
+            ssim = dip.metrics.SSIM(original, rot1_reshaped)
+        if ssim_rot2[0] > ssim[0]:
+            ssim = dip.metrics.SSIM(original, rot2_reshaped)
+        if ssim_rot3[0] > ssim[0]:
+            ssim = dip.metrics.SSIM(original, rot3_reshaped)
+        
         flag = 0
         if i > 0:
             for p in maxdict.keys():
